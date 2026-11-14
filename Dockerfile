@@ -14,7 +14,7 @@ RUN apk add --no-cache libc6-compat
 COPY package.json package-lock.json* ./
 
 # Install dependencies (skip postinstall, will run in builder stage)
-RUN --mount=type=cache,id=npm-cache,target=/root/.npm npm ci --legacy-peer-deps --ignore-scripts
+RUN npm ci --legacy-peer-deps --ignore-scripts
 
 # ========================================
 # Stage 2: Builder
