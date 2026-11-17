@@ -36,7 +36,7 @@ ENV NODE_ENV=production
 RUN npm run build
 
 # ========================================
-# Stage 3: Runner (Production)
+# Stage 3: Runner (Production with Redis)
 # ========================================
 FROM docker.m.daocloud.io/library/node:22-alpine AS runner
 WORKDIR /app
@@ -44,9 +44,14 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Create non-root user
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+# Install Redis and bash/compat tools in Alpine runner stage
+RUN apk add --no-cache redis tzdata
+
+# Create non-root user (Note: running Redis inside container alongside app 
+# typically works well as root or via custom configurations; if permission 
+# issues occur with redis log/pid, running entrypoint as root or configuring redis.conf is common)
+# Create necessary directories for redis if running with constraints
+RUN mkdir -p /var/lib/redis /var/log/redis
 
 # Copy necessary files from builder
 COPY --from=builder /app/public ./public
@@ -55,15 +60,17 @@ COPY --from=builder /app/prisma.config.ts ./
 COPY --from=builder /app/package.json ./package.json
 
 # Copy standalone build (includes bundled dependencies)
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 
 # Copy Prisma adapter runtime (required for Prisma v7 adapter pattern)
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder /app/node_modules/dotenv ./node_modules/dotenv
 
-USER nextjs
+# Copy and prepare entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 3000
 
@@ -74,4 +81,5 @@ ENV HOSTNAME="0.0.0.0"
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/status || exit 1
 
-CMD ["node", "server.js"]
+# Use entrypoint script to boot Redis and Next.js together
+ENTRYPOINT ["/entrypoint.sh"]
